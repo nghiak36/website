@@ -1,0 +1,6 @@
+{
+  "name": "EdTech ExamHub - Nền Tảng Giao & Làm Bài Tập Trắc Nghiệm Online",
+  "description": "Hệ thống giao và làm bài kiểm tra trắc nghiệm online dành cho Giáo viên & Học sinh, đồng bộ Cloud Firebase Firestore, tự động chấm điểm và xuất Excel UTF-8.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
