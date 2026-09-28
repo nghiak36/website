@@ -12,13 +12,19 @@ import {
   Terminal,
   Layers,
   Sparkles,
-  Server
+  Server,
+  CloudLightning,
+  AlertCircle,
+  CheckCircle2,
+  RefreshCw
 } from 'lucide-react';
 import { generateStandaloneHtml } from '../../services/standaloneGenerator';
 import {
   saveCustomFirebaseConfig,
   getSavedFirebaseConfig,
-  getIsCloudConnected
+  getIsCloudConnected,
+  getFirebaseConfigSource,
+  testFirestoreConnection
 } from '../../services/storage';
 import { FirebaseCustomConfig } from '../../types';
 
@@ -29,15 +35,68 @@ interface CloudSetupGuideProps {
 export const CloudSetupGuide: React.FC<CloudSetupGuideProps> = ({ onConfigUpdated }) => {
   const [copiedCode, setCopiedCode] = useState(false);
   const [downloaded, setDownloaded] = useState(false);
+  const [copiedVercelEnv, setCopiedVercelEnv] = useState(false);
+  const [copiedRules, setCopiedRules] = useState(false);
   const [configJsonInput, setConfigJsonInput] = useState('');
   const [configSaveMsg, setConfigSaveMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  // Trạng thái kiểm tra kết nối Firestore thực tế
+  const [isTesting, setIsTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+
   const isConnected = getIsCloudConnected();
+  const configSource = getFirebaseConfigSource();
   const currentSaved = getSavedFirebaseConfig();
+
+  // Mẫu biến môi trường cho Vercel
+  const sampleVercelEnv = `# Dán các biến này vào Vercel: Project Settings -> Environment Variables
+VITE_FIREBASE_API_KEY=${currentSaved?.apiKey || 'AIzaSy...'}
+VITE_FIREBASE_AUTH_DOMAIN=${currentSaved?.authDomain || 'your-project.firebaseapp.com'}
+VITE_FIREBASE_PROJECT_ID=${currentSaved?.projectId || 'your-project-id'}
+VITE_FIREBASE_STORAGE_BUCKET=${currentSaved?.storageBucket || 'your-project.firebasestorage.app'}
+VITE_FIREBASE_MESSAGING_SENDER_ID=${currentSaved?.messagingSenderId || '123456789'}
+VITE_FIREBASE_APP_ID=${currentSaved?.appId || '1:123456789:web:abc123def456'}
+VITE_FIREBASE_MEASUREMENT_ID=${currentSaved?.measurementId || 'G-ABC123XYZ'}`;
+
+  // Mẫu quy tắc Firestore Rules
+  const sampleFirestoreRules = `rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Đề kiểm tra: Cho phép học sinh đọc để làm bài, giáo viên tạo/sửa/xóa
+    match /exams/{examId} {
+      allow read, write: if true;
+    }
+    // Bài nộp học sinh: Cho phép nộp bài, xem danh sách, chấm điểm và xóa
+    match /submissions/{submissionId} {
+      allow read, write: if true;
+    }
+    // Cài đặt hệ thống & Tài khoản giáo viên: Đồng bộ mật khẩu đổi trên mọi máy tính
+    match /settings/{settingId} {
+      allow read, write: if true;
+    }
+  }
+}`;
+
+  // Kiểm tra kết nối Firebase thực tế
+  const handleTestConnection = async () => {
+    setIsTesting(true);
+    setTestResult(null);
+    try {
+      const res = await testFirestoreConnection();
+      setTestResult(res);
+    } catch (e: any) {
+      setTestResult({
+        success: false,
+        message: 'Lỗi kiểm tra kết nối: ' + (e?.message || 'Không thể kết nối')
+      });
+    } finally {
+      setIsTesting(false);
+    }
+  };
 
   // Tải file index.html độc lập
   const handleDownloadStandaloneHtml = () => {
-    const htmlContent = generateStandaloneHtml();
+    const htmlContent = generateStandaloneHtml(getSavedFirebaseConfig());
     const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -53,16 +112,29 @@ export const CloudSetupGuide: React.FC<CloudSetupGuideProps> = ({ onConfigUpdate
 
   // Sao chép toàn bộ mã nguồn file index.html
   const handleCopyStandaloneCode = () => {
-    const htmlContent = generateStandaloneHtml();
+    const htmlContent = generateStandaloneHtml(getSavedFirebaseConfig());
     navigator.clipboard.writeText(htmlContent);
     setCopiedCode(true);
     setTimeout(() => setCopiedCode(false), 2000);
   };
 
+  // Sao chép mẫu biến môi trường cho Vercel
+  const handleCopyVercelEnv = () => {
+    navigator.clipboard.writeText(sampleVercelEnv);
+    setCopiedVercelEnv(true);
+    setTimeout(() => setCopiedVercelEnv(false), 2000);
+  };
+
+  // Sao chép Firestore rules
+  const handleCopyRules = () => {
+    navigator.clipboard.writeText(sampleFirestoreRules);
+    setCopiedRules(true);
+    setTimeout(() => setCopiedRules(false), 2000);
+  };
+
   // Lưu cấu hình Firebase người dùng dán vào
   const handleSaveFirebaseConfig = () => {
     try {
-      // Cho phép người dùng dán object JS hoặc JSON hoặc đoạn code `const firebaseConfig = { ... }`
       let clean = configJsonInput.trim();
       if (clean.includes('firebaseConfig =')) {
         clean = clean.split('firebaseConfig =')[1];
@@ -71,7 +143,6 @@ export const CloudSetupGuide: React.FC<CloudSetupGuideProps> = ({ onConfigUpdate
         clean = clean.slice(0, -1);
       }
 
-      // Xử lý json key không có nháy kép nếu dán từ JS
       const parsedConfig = new Function(`return ${clean}`)();
 
       if (!parsedConfig.apiKey || !parsedConfig.projectId) {
@@ -105,12 +176,173 @@ export const CloudSetupGuide: React.FC<CloudSetupGuideProps> = ({ onConfigUpdate
 
   return (
     <div className="space-y-8 max-w-5xl mx-auto">
-      {/* 1. HERO BANNER: 1-CLICK TẢI FILE INDEX.HTML ĐỘC LẬP */}
+      {/* 1. THANH TRẠNG THÁI KẾT NỐI CLOUD / VERCEL */}
+      <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-7 shadow-xs">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${
+              isConnected ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+            }`}>
+              <Server className="w-6 h-6" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="font-black text-slate-900 text-base sm:text-lg">
+                  Trạng Thái Kết Nối Firebase Cloud
+                </h3>
+                <span
+                  className={`text-xs px-2.5 py-0.5 rounded-full font-bold border ${
+                    isConnected
+                      ? configSource === 'env'
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
+                        : 'bg-blue-50 text-blue-700 border-blue-300'
+                      : 'bg-amber-50 text-amber-800 border-amber-300'
+                  }`}
+                >
+                  {isConnected
+                    ? configSource === 'env'
+                      ? '🟢 Biến môi trường Vercel (Tối ưu nhất)'
+                      : '🟡 Lưu trong LocalStorage máy này'
+                    : '⚪ Đang chạy Offline (LocalStorage)'}
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 mt-0.5">
+                {isConnected && currentSaved?.projectId ? (
+                  <span>
+                    Đang kết nối tới dự án Firebase: <strong className="text-indigo-600 font-bold">{currentSaved.projectId}</strong>
+                  </span>
+                ) : (
+                  'Chưa kết nối Cloud. Dữ liệu đề thi và bài làm hiện chỉ lưu trên trình duyệt của máy hiện tại.'
+                )}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <button
+              onClick={handleTestConnection}
+              disabled={isTesting || !isConnected}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 ${
+                isConnected
+                  ? 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 cursor-pointer'
+                  : 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200'
+              }`}
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isTesting ? 'animate-spin' : ''}`} />
+              <span>{isTesting ? 'Đang kiểm tra...' : 'Kiểm Tra Kết Nối Cloud'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Thông báo kết quả kiểm tra kết nối */}
+        {testResult && (
+          <div
+            className={`mt-4 p-4 rounded-2xl border text-xs font-semibold flex items-start gap-2.5 ${
+              testResult.success
+                ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                : 'bg-red-50 text-red-800 border-red-200'
+            }`}
+          >
+            {testResult.success ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+            ) : (
+              <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+            )}
+            <div className="space-y-1">
+              <p>{testResult.message}</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 2. HƯỚNG DẪN ĐƯA LÊN VERCEL & KẾT NỐI FIREBASE CHUẨN */}
+      <div className="bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 rounded-3xl p-6 sm:p-9 text-white shadow-xl space-y-6">
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 rounded-2xl bg-white/10 flex items-center justify-center text-indigo-300">
+            <CloudLightning className="w-7 h-7" />
+          </div>
+          <div>
+            <div className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 text-xs font-bold mb-1 border border-indigo-500/30">
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Dành cho việc đưa web lên Vercel để gửi học sinh làm bài</span>
+            </div>
+            <h2 className="text-xl sm:text-2xl font-black">
+              Hướng Dẫn Đưa Lên Vercel & Kết Nối Firebase (3 Bước Chuẩn)
+            </h2>
+            <p className="text-slate-300 text-xs mt-1 leading-relaxed">
+              Khi đưa lên Vercel, cả Thầy/Cô và tất cả học sinh (ở bất kỳ đâu, trên điện thoại hay máy tính) đều kết nối chung vào 1 cơ sở dữ liệu Firebase Firestore duy nhất.
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5 pt-2">
+          {/* Bước 1: Vercel Settings */}
+          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-5 border border-white/10 space-y-3 flex flex-col justify-between">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="w-7 h-7 rounded-xl bg-indigo-500 text-white font-black text-xs flex items-center justify-center">1</span>
+                <span className="text-[10px] font-bold text-indigo-300 uppercase">Vercel Env Vars</span>
+              </div>
+              <h4 className="font-bold text-sm text-white">Cấu Hình Biến Môi Trường Trên Vercel</h4>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                Trên Vercel: Vào dự án của bạn &gt; <strong>Settings</strong> &gt; <strong>Environment Variables</strong> &gt; dán các biến <code>VITE_FIREBASE_*</code> vào.
+              </p>
+            </div>
+            <button
+              onClick={handleCopyVercelEnv}
+              className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow"
+            >
+              {copiedVercelEnv ? <Check className="w-3.5 h-3.5 text-emerald-300" /> : <Copy className="w-3.5 h-3.5" />}
+              <span>{copiedVercelEnv ? 'Đã sao chép mẫu .env!' : 'Copy Mẫu Biến Vercel (.env)'}</span>
+            </button>
+          </div>
+
+          {/* Bước 2: Firestore Rules */}
+          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-5 border border-white/10 space-y-3 flex flex-col justify-between">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="w-7 h-7 rounded-xl bg-amber-500 text-white font-black text-xs flex items-center justify-center">2</span>
+                <span className="text-[10px] font-bold text-amber-300 uppercase">Quyền Firestore</span>
+              </div>
+              <h4 className="font-bold text-sm text-white">Mở Quyền Firestore Rules</h4>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                Vào <strong>Firebase Console &gt; Firestore &gt; Tab Rules</strong>, dán quy tắc cho phép đọc/ghi để học sinh gửi bài thi không bị lỗi <em>"permission-denied"</em>.
+              </p>
+            </div>
+            <button
+              onClick={handleCopyRules}
+              className="w-full py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl text-xs font-black transition flex items-center justify-center gap-1.5 shadow"
+            >
+              {copiedRules ? <Check className="w-3.5 h-3.5 text-emerald-950" /> : <Copy className="w-3.5 h-3.5" />}
+              <span>{copiedRules ? 'Đã sao chép Rules!' : 'Copy Firestore Rules'}</span>
+            </button>
+          </div>
+
+          {/* Bước 3: Deploy Vercel */}
+          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-5 border border-white/10 space-y-3 flex flex-col justify-between">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="w-7 h-7 rounded-xl bg-emerald-500 text-white font-black text-xs flex items-center justify-center">3</span>
+                <span className="text-[10px] font-bold text-emerald-300 uppercase">Triển khai</span>
+              </div>
+              <h4 className="font-bold text-sm text-white">Deploy & Nhận Link Web</h4>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                Đã có sẵn file <code>vercel.json</code> trong mã nguồn giúp điều hướng SPA mượt mà không lỗi 404 khi tải lại trang trên Vercel.
+              </p>
+            </div>
+            <div className="p-2.5 bg-emerald-500/20 text-emerald-300 rounded-xl text-xs font-bold text-center border border-emerald-500/30">
+              ✔ vercel.json đã sẵn sàng
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 3. HERO BANNER: 1-CLICK TẢI FILE INDEX.HTML ĐỘC LẬP */}
       <div className="bg-gradient-to-r from-indigo-700 via-purple-700 to-indigo-800 rounded-3xl p-6 sm:p-10 text-white shadow-xl shadow-indigo-100 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
         <div className="space-y-3 max-w-xl">
           <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-white/15 backdrop-blur-md text-xs font-bold text-indigo-100">
             <Zap className="w-4 h-4 text-amber-300" />
-            <span>Mã nguồn hoàn chỉnh 100% độc lập</span>
+            <span>Tùy chọn phụ: Chạy file độc lập không cần build</span>
           </div>
           <h2 className="text-2xl sm:text-3xl font-black tracking-tight">
             Tải Về File <code className="bg-white/20 px-2 py-0.5 rounded text-amber-200">index.html</code> Duy Nhất
@@ -132,7 +364,7 @@ export const CloudSetupGuide: React.FC<CloudSetupGuideProps> = ({ onConfigUpdate
 
           <button
             onClick={handleDownloadStandaloneHtml}
-            className="px-6 py-3.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black rounded-2xl text-sm shadow-xl transition flex items-center justify-center gap-2 hover:scale-105 active:scale-95"
+            className="px-6 py-3.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black rounded-2xl text-sm shadow-xl transition flex items-center justify-center gap-2 hover:scale-105 active:scale-95 cursor-pointer"
           >
             <Download className="w-5 h-5" />
             <span>{downloaded ? 'Đã tải về máy! 🎉' : 'Tải File index.html (1-Click)'}</span>
@@ -140,7 +372,7 @@ export const CloudSetupGuide: React.FC<CloudSetupGuideProps> = ({ onConfigUpdate
         </div>
       </div>
 
-      {/* 2. CẤU HÌNH FIREBASE NGAY TRÊN ỨNG DỤNG NÀY */}
+      {/* 4. CẤU HÌNH FIREBASE THỦ CÔNG (NẾU KHÔNG DÙNG BIẾN VERCEL) */}
       <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-5">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
           <div className="flex items-center gap-3">
@@ -148,24 +380,11 @@ export const CloudSetupGuide: React.FC<CloudSetupGuideProps> = ({ onConfigUpdate
               <Flame className="w-7 h-7" />
             </div>
             <div>
-              <h3 className="font-extrabold text-slate-900 text-lg">Cấu Hình Kết Nối Firebase Cloud</h3>
+              <h3 className="font-extrabold text-slate-900 text-lg">Dán Cấu Hình Firebase Thủ Công (Tùy Chọn)</h3>
               <p className="text-xs text-slate-500">
-                Đồng bộ bài thi và điểm số của học sinh trực tiếp vào Database của bạn
+                Nếu không dùng biến môi trường Vercel, Thầy/Cô có thể dán trực tiếp đoạn mã <code>firebaseConfig</code> vào đây để lưu trên máy
               </p>
             </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <span
-              className={`text-xs px-3 py-1 rounded-full font-bold flex items-center gap-1.5 border ${
-                isConnected
-                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                  : 'bg-amber-50 text-amber-800 border-amber-200'
-              }`}
-            >
-              <Server className="w-3.5 h-3.5" />
-              <span>{isConnected ? 'Firebase Cloud Đã Kết Nối 🟢' : 'Đang dùng LocalStorage'}</span>
-            </span>
           </div>
         </div>
 
@@ -201,190 +420,14 @@ export const CloudSetupGuide: React.FC<CloudSetupGuideProps> = ({ onConfigUpdate
 
           <div className="flex items-center justify-between pt-2">
             <p className="text-xs text-slate-400">
-              * Nếu không cấu hình, toàn bộ dữ liệu vẫn được lưu trữ an toàn trong máy (LocalStorage).
+              * Khuyên dùng thiết lập biến môi trường trên Vercel để học sinh tự động kết nối mà không cần cấu hình lại.
             </p>
             <button
               onClick={handleSaveFirebaseConfig}
-              className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow transition"
+              className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow transition cursor-pointer"
             >
-              Lưu & Kiểm Tra Kết Nối
+              Lưu & Kích Hoạt Firebase
             </button>
-          </div>
-        </div>
-      </div>
-
-      {/* 3. HƯỚNG DẪN 3 BƯỚC TẠO FIREBASE FIRESTORE MIỄN PHÍ */}
-      <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-6">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-black">
-            1
-          </div>
-          <div>
-            <h3 className="font-extrabold text-slate-900 text-lg">
-              Cách Tạo Cơ Sở Dữ Liệu Firebase Firestore Miễn Phí (Trong 3 Phút)
-            </h3>
-            <p className="text-xs text-slate-500">
-              Hoàn toàn miễn phí, lưu trữ hàng ngàn bài thi mà không cần thẻ tín dụng
-            </p>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="p-5 bg-slate-50 rounded-2xl border border-slate-200 space-y-2">
-            <span className="text-xs font-black text-indigo-600 bg-indigo-100 px-2.5 py-0.5 rounded-full">
-              Bước 1
-            </span>
-            <h4 className="font-bold text-slate-900 text-sm">Tạo Dự Án Firebase</h4>
-            <p className="text-xs text-slate-600 leading-relaxed">
-              Truy cập{' '}
-              <a
-                href="https://console.firebase.google.com"
-                target="_blank"
-                rel="noreferrer"
-                className="text-indigo-600 font-bold underline inline-flex items-center gap-1"
-              >
-                console.firebase.google.com <ExternalLink className="w-3 h-3" />
-              </a>
-              . Đăng nhập bằng Gmail, nhấp <strong>"Add project"</strong> và đặt tên dự án (ví dụ: <code>thi-truc-nghiem</code>).
-            </p>
-          </div>
-
-          <div className="p-5 bg-slate-50 rounded-2xl border border-slate-200 space-y-2">
-            <span className="text-xs font-black text-indigo-600 bg-indigo-100 px-2.5 py-0.5 rounded-full">
-              Bước 2
-            </span>
-            <h4 className="font-bold text-slate-900 text-sm">Bật Cloud Firestore</h4>
-            <p className="text-xs text-slate-600 leading-relaxed">
-              Vào mục <strong>Build &gt; Firestore Database</strong> &gt; Nhấp <strong>"Create database"</strong>.
-              Chọn chế độ <strong>"Start in test mode"</strong> (Chế độ thử nghiệm) để học sinh có thể ghi bài nộp mà không cần tài khoản mật khẩu.
-            </p>
-          </div>
-
-          <div className="p-5 bg-slate-50 rounded-2xl border border-slate-200 space-y-2">
-            <span className="text-xs font-black text-indigo-600 bg-indigo-100 px-2.5 py-0.5 rounded-full">
-              Bước 3
-            </span>
-            <h4 className="font-bold text-slate-900 text-sm">Lấy Mã firebaseConfig</h4>
-            <p className="text-xs text-slate-600 leading-relaxed">
-              Vào biểu tượng <strong>Cài đặt dự án (Project Settings)</strong> &gt; kéo xuống mục <strong>"Your apps"</strong> &gt; chọn biểu tượng Web (<strong>&lt;/&gt;</strong>).
-              Sao chép object <code>firebaseConfig</code> và dán vào file <code>index.html</code> (dòng 50) hoặc ô cấu hình ở trên!
-            </p>
-          </div>
-        </div>
-
-        {/* Mẹo cấu hình bảo mật Firestore Rules */}
-        <div className="p-4 bg-amber-50 rounded-2xl border border-amber-200 text-xs text-amber-900 space-y-1">
-          <p className="font-bold">💡 Lưu ý quan trọng về Firestore Rules (Bảo mật cho học sinh nộp bài):</p>
-          <p>
-            Vào tab <strong>Rules</strong> của Firestore trong Firebase Console và đảm bảo cho phép đọc/ghi:
-          </p>
-          <pre className="p-3 bg-white rounded-xl border border-amber-300 font-mono text-slate-800 text-xs mt-1">
-{`rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /{document=**} {
-      allow read, write: if true;
-    }
-  }
-}`}
-          </pre>
-        </div>
-      </div>
-
-      {/* 4. HƯỚNG DẪN ĐƯA LÊN WEB MIỄN PHÍ ĐỂ GỬI LINK CHO HỌC SINH */}
-      <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-6">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-black">
-            2
-          </div>
-          <div>
-            <h3 className="font-extrabold text-slate-900 text-lg">
-              Cách Đưa File index.html Lên Mạng Để Lấy Link Gửi Học Sinh (30 Giây)
-            </h3>
-            <p className="text-xs text-slate-500">
-              Không cần mua tên miền, không tốn phí máy chủ, hoạt động 24/7
-            </p>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-          {/* Cách 1: Netlify Drop (Nhanh nhất thế giới - 30 giây) */}
-          <div className="p-5 bg-gradient-to-b from-slate-50 to-emerald-50/30 rounded-2xl border border-slate-200 space-y-3 flex flex-col justify-between">
-            <div className="space-y-2">
-              <span className="text-xs font-black text-emerald-700 bg-emerald-100 px-2.5 py-0.5 rounded-full inline-block">
-                Khuyên Dùng (30 giây)
-              </span>
-              <h4 className="font-bold text-slate-900 text-base">Netlify Drop</h4>
-              <p className="text-xs text-slate-600 leading-relaxed">
-                1. Tạo 1 thư mục trên máy tính, bỏ file <code>index.html</code> vừa tải vào thư mục đó.<br />
-                2. Mở trình duyệt vào:{' '}
-                <a
-                  href="https://app.netlify.com/drop"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-emerald-700 font-bold underline inline-flex items-center gap-1"
-                >
-                  app.netlify.com/drop <ExternalLink className="w-3 h-3" />
-                </a><br />
-                3. Kéo thả thư mục đó vào trình duyệt. Trong 5 giây bạn sẽ nhận được đường link web (ví dụ: <code>https://bai-tap-12a1.netlify.app</code>) để gửi qua Zalo/Facebook cho học sinh!
-              </p>
-            </div>
-            <div className="text-xs text-emerald-700 font-bold bg-white p-2.5 rounded-xl border border-emerald-100">
-              ✔ Miễn phí 100% vĩnh viễn
-            </div>
-          </div>
-
-          {/* Cách 2: Vercel */}
-          <div className="p-5 bg-slate-50 rounded-2xl border border-slate-200 space-y-3 flex flex-col justify-between">
-            <div className="space-y-2">
-              <span className="text-xs font-black text-slate-700 bg-slate-200 px-2.5 py-0.5 rounded-full inline-block">
-                Cách 2
-              </span>
-              <h4 className="font-bold text-slate-900 text-base">Vercel Deploy</h4>
-              <p className="text-xs text-slate-600 leading-relaxed">
-                1. Vào{' '}
-                <a
-                  href="https://vercel.com"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-indigo-600 font-bold underline"
-                >
-                  vercel.com
-                </a>{' '}
-                và đăng ký tài khoản miễn phí.<br />
-                2. Chọn "Add New Project" &gt; Kéo thả thư mục chứa <code>index.html</code>.<br />
-                3. Nhấn "Deploy" để nhận link tốc độ cao trên toàn thế giới.
-              </p>
-            </div>
-            <div className="text-xs text-slate-600 font-bold bg-white p-2.5 rounded-xl border border-slate-200">
-              ✔ Hỗ trợ tùy chỉnh tên miền riêng
-            </div>
-          </div>
-
-          {/* Cách 3: GitHub Pages */}
-          <div className="p-5 bg-slate-50 rounded-2xl border border-slate-200 space-y-3 flex flex-col justify-between">
-            <div className="space-y-2">
-              <span className="text-xs font-black text-slate-700 bg-slate-200 px-2.5 py-0.5 rounded-full inline-block">
-                Cách 3
-              </span>
-              <h4 className="font-bold text-slate-900 text-base">GitHub Pages</h4>
-              <p className="text-xs text-slate-600 leading-relaxed">
-                1. Tạo repository mới trên{' '}
-                <a
-                  href="https://github.com"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-indigo-600 font-bold underline"
-                >
-                  github.com
-                </a>.<br />
-                2. Upload file <code>index.html</code> lên nhánh <code>main</code>.<br />
-                3. Vào <strong>Settings &gt; Pages</strong> &gt; Chọn nguồn từ nhánh <code>main</code>. Bạn sẽ có link dạng <code>https://tentaikhoan.github.io/tende</code>.
-              </p>
-            </div>
-            <div className="text-xs text-slate-600 font-bold bg-white p-2.5 rounded-xl border border-slate-200">
-              ✔ Ổn định và quản lý mã nguồn lâu dài
-            </div>
           </div>
         </div>
       </div>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Lock,
   ShieldCheck,
@@ -10,13 +10,15 @@ import {
   Eye,
   EyeOff,
   ArrowLeft,
-  Sparkles
+  Sparkles,
+  RefreshCw
 } from 'lucide-react';
 import {
   loginTeacher,
   getTeacherAccount,
   completeInitialPasswordChange,
   resetPasswordWithPhone,
+  syncTeacherAccountWithCloud,
   RECOVERY_PHONE
 } from '../../services/teacherAuth';
 
@@ -35,10 +37,11 @@ export const TeacherLoginModal: React.FC<TeacherLoginModalProps> = ({
   const [modalMode, setModalMode] = useState<'login' | 'force_change_password' | 'forgot_password'>('login');
 
   const [username, setUsername] = useState('admin');
-  const [password, setPassword] = useState('admin');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
 
   // Đổi mật khẩu lần đầu
   const [newPassword, setNewPassword] = useState('');
@@ -48,31 +51,51 @@ export const TeacherLoginModal: React.FC<TeacherLoginModalProps> = ({
   const [phoneInput, setPhoneInput] = useState('');
   const [resetNewPass, setResetNewPass] = useState('');
 
+  // Tự động đồng bộ tài khoản từ Cloud Firestore ngay khi mở modal
+  useEffect(() => {
+    if (isOpen) {
+      setErrorMessage('');
+      setSuccessMessage('');
+      syncTeacherAccountWithCloud().then((acc) => {
+        if (acc && acc.username) {
+          setUsername(acc.username);
+        }
+      });
+    }
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
   // 1. Đăng nhập
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
     setSuccessMessage('');
+    setIsLoading(true);
 
-    const res = loginTeacher(username, password);
-    if (res.success) {
-      if (res.requiresPasswordChange) {
-        setModalMode('force_change_password');
-        setNewPassword('');
-        setConfirmNewPassword('');
-        setSuccessMessage('Đăng nhập thành công! Vì lý do an toàn, bạn bắt buộc phải đổi mật khẩu mới cho lần đầu tiên sử dụng.');
+    try {
+      const res = await loginTeacher(username, password);
+      if (res.success) {
+        if (res.requiresPasswordChange) {
+          setModalMode('force_change_password');
+          setNewPassword('');
+          setConfirmNewPassword('');
+          setSuccessMessage('Đăng nhập thành công! Vì lý do an toàn, Thầy/Cô vui lòng đổi mật khẩu mới cho lần đầu tiên sử dụng.');
+        } else {
+          onSuccess();
+        }
       } else {
-        onSuccess();
+        setErrorMessage(res.message);
       }
-    } else {
-      setErrorMessage(res.message);
+    } catch (err: any) {
+      setErrorMessage('Lỗi đăng nhập: ' + (err?.message || 'Không thể xác thực'));
+    } finally {
+      setIsLoading(false);
     }
   };
 
   // 2. Lưu mật khẩu mới lần đầu
-  const handleForceChangePassword = (e: React.FormEvent) => {
+  const handleForceChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
 
@@ -81,31 +104,45 @@ export const TeacherLoginModal: React.FC<TeacherLoginModalProps> = ({
       return;
     }
 
-    const res = completeInitialPasswordChange(newPassword);
-    if (res.success) {
-      alert(res.message);
-      onSuccess();
-    } else {
-      setErrorMessage(res.message);
+    setIsLoading(true);
+    try {
+      const res = await completeInitialPasswordChange(newPassword);
+      if (res.success) {
+        alert(res.message);
+        onSuccess();
+      } else {
+        setErrorMessage(res.message);
+      }
+    } catch (err: any) {
+      setErrorMessage('Lỗi đổi mật khẩu: ' + (err?.message || 'Không thể đổi'));
+    } finally {
+      setIsLoading(false);
     }
   };
 
   // 3. Khôi phục mật khẩu qua số điện thoại
-  const handleForgotPhoneReset = (e: React.FormEvent) => {
+  const handleForgotPhoneReset = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
     setSuccessMessage('');
 
-    const res = resetPasswordWithPhone(phoneInput, resetNewPass);
-    if (res.success) {
-      setSuccessMessage(res.message);
-      setTimeout(() => {
-        setModalMode('login');
-        setPassword(resetNewPass);
-        setSuccessMessage('Mật khẩu đã được đặt lại thành công! Bạn có thể đăng nhập ngay.');
-      }, 1500);
-    } else {
-      setErrorMessage(res.message);
+    setIsLoading(true);
+    try {
+      const res = await resetPasswordWithPhone(phoneInput, resetNewPass);
+      if (res.success) {
+        setSuccessMessage(res.message);
+        setTimeout(() => {
+          setModalMode('login');
+          setPassword(resetNewPass);
+          setSuccessMessage('Mật khẩu đã được đặt lại thành công! Bạn có thể đăng nhập ngay.');
+        }, 1500);
+      } else {
+        setErrorMessage(res.message);
+      }
+    } catch (err: any) {
+      setErrorMessage('Lỗi khôi phục: ' + (err?.message || 'Không thể khôi phục'));
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -222,15 +259,24 @@ export const TeacherLoginModal: React.FC<TeacherLoginModalProps> = ({
               <button
                 type="button"
                 onClick={onCancel}
+                disabled={isLoading}
                 className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-2xl text-sm transition"
               >
                 Học Sinh Quay Lại
               </button>
               <button
                 type="submit"
-                className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-2xl text-sm shadow-md shadow-indigo-100 transition"
+                disabled={isLoading}
+                className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-2xl text-sm shadow-md shadow-indigo-100 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-75"
               >
-                Vào Hệ Thống
+                {isLoading ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Đang kiểm tra...</span>
+                  </>
+                ) : (
+                  <span>Vào Hệ Thống</span>
+                )}
               </button>
             </div>
           </form>
@@ -240,7 +286,7 @@ export const TeacherLoginModal: React.FC<TeacherLoginModalProps> = ({
         {modalMode === 'force_change_password' && (
           <form onSubmit={handleForceChangePassword} className="space-y-4">
             <div className="p-3 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-900 font-medium leading-relaxed">
-              ⚠️ <strong>Lưu ý quan trọng:</strong> Đây là lần đầu tiên bạn đăng nhập với tài khoản mặc định. Bạn bắt buộc phải đổi mật khẩu mới để học sinh không thể truy cập tài khoản này!
+              ⚠️ <strong>Lưu ý quan trọng:</strong> Đây là lần đầu tiên bạn đăng nhập với tài khoản mặc định. Bạn bắt buộc phải đổi mật khẩu mới để học sinh không thể truy cập tài khoản này! (Mật khẩu mới sẽ được đồng bộ lên Cloud để dùng trên mọi máy tính).
             </div>
 
             <div className="space-y-1.5">
@@ -269,9 +315,17 @@ export const TeacherLoginModal: React.FC<TeacherLoginModalProps> = ({
 
             <button
               type="submit"
-              className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-2xl text-sm shadow-md shadow-emerald-100 transition"
+              disabled={isLoading}
+              className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-2xl text-sm shadow-md shadow-emerald-100 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-75"
             >
-              Lưu Mật Khẩu Mới & Vào Hệ Thống
+              {isLoading ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>Đang lưu và đồng bộ Cloud...</span>
+                </>
+              ) : (
+                <span>Lưu Mật Khẩu Mới & Vào Hệ Thống</span>
+              )}
             </button>
           </form>
         )}
@@ -312,6 +366,7 @@ export const TeacherLoginModal: React.FC<TeacherLoginModalProps> = ({
             <div className="flex items-center gap-3 pt-2">
               <button
                 type="button"
+                disabled={isLoading}
                 onClick={() => {
                   setErrorMessage('');
                   setSuccessMessage('');
@@ -324,9 +379,17 @@ export const TeacherLoginModal: React.FC<TeacherLoginModalProps> = ({
               </button>
               <button
                 type="submit"
-                className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-2xl text-xs shadow-md transition"
+                disabled={isLoading}
+                className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-2xl text-xs shadow-md transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-75"
               >
-                Xác Nhận & Đặt Lại
+                {isLoading ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Đang xử lý...</span>
+                  </>
+                ) : (
+                  <span>Xác Nhận & Đặt Lại</span>
+                )}
               </button>
             </div>
           </form>

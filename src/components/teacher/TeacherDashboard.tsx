@@ -12,7 +12,13 @@ import {
   ChevronRight,
   LogOut,
   GraduationCap,
-  BookOpen
+  BookOpen,
+  KeyRound,
+  ShieldCheck,
+  Check,
+  RefreshCw,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { Exam, Submission } from '../../types';
 import { ExamManager } from './ExamManager';
@@ -20,7 +26,7 @@ import { SubmissionsList } from './SubmissionsList';
 import { ExamCreator } from './ExamCreator';
 import { ExportSection } from './ExportSection';
 import { CloudSetupGuide } from './CloudSetupGuide';
-import { getTeacherAccount } from '../../services/teacherAuth';
+import { getTeacherAccount, updateTeacherCredentials } from '../../services/teacherAuth';
 
 interface TeacherDashboardProps {
   exams: Exam[];
@@ -57,6 +63,53 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   const [editingExam, setEditingExam] = useState<Exam | null>(null);
 
   const teacherAcc = getTeacherAccount();
+
+  // Modal đổi ID / Mật khẩu Giáo Viên
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+  const [newAdminUsername, setNewAdminUsername] = useState(teacherAcc.username);
+  const [newAdminPassword, setNewAdminPassword] = useState('');
+  const [confirmAdminPassword, setConfirmAdminPassword] = useState('');
+  const [showAdminPass, setShowAdminPass] = useState(false);
+  const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
+  const [passwordMsg, setPasswordMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const handleUpdateAdminAccount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasswordMsg(null);
+
+    if (newAdminPassword && newAdminPassword.length < 4) {
+      setPasswordMsg({ type: 'error', text: 'Mật khẩu mới phải có ít nhất 4 ký tự!' });
+      return;
+    }
+
+    if (newAdminPassword && newAdminPassword !== confirmAdminPassword) {
+      setPasswordMsg({ type: 'error', text: 'Mật khẩu xác nhận không trùng khớp!' });
+      return;
+    }
+
+    setIsUpdatingPassword(true);
+    try {
+      const res = await updateTeacherCredentials(
+        newAdminUsername,
+        newAdminPassword || undefined
+      );
+      if (res.success) {
+        setPasswordMsg({ type: 'success', text: res.message });
+        setTimeout(() => {
+          setIsPasswordModalOpen(false);
+          setPasswordMsg(null);
+          setNewAdminPassword('');
+          setConfirmAdminPassword('');
+        }, 1800);
+      } else {
+        setPasswordMsg({ type: 'error', text: res.message });
+      }
+    } catch (err: any) {
+      setPasswordMsg({ type: 'error', text: 'Lỗi: ' + (err?.message || 'Không thể cập nhật') });
+    } finally {
+      setIsUpdatingPassword(false);
+    }
+  };
 
   // Tính các chỉ số thống kê
   const totalExams = exams.length;
@@ -118,6 +171,20 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
         </div>
 
         <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+          <button
+            onClick={() => {
+              setNewAdminUsername(teacherAcc.username);
+              setNewAdminPassword('');
+              setConfirmAdminPassword('');
+              setPasswordMsg(null);
+              setIsPasswordModalOpen(true);
+            }}
+            className="px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-2xl text-xs transition flex items-center gap-1.5 border border-indigo-200 cursor-pointer"
+            title="Đổi ID hoặc mật khẩu quản trị của Giáo viên"
+          >
+            <KeyRound className="w-4 h-4" />
+            <span>Đổi Mật Khẩu</span>
+          </button>
           <button
             onClick={onLogout}
             className="px-3.5 py-2 bg-red-50 hover:bg-red-100 text-red-700 font-bold rounded-2xl text-xs transition flex items-center gap-1.5 border border-red-200"
@@ -293,6 +360,117 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
 
       {activeTab === 'cloud' && (
         <CloudSetupGuide onConfigUpdated={onRefreshData} />
+      )}
+
+      {/* MODAL ĐỔI ID & MẬT KHẨU GIÁO VIÊN (ĐỒNG BỘ CLOUD) */}
+      {isPasswordModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-white rounded-3xl p-6 sm:p-7 max-w-md w-full shadow-2xl space-y-5 border border-slate-100 relative">
+            <button
+              onClick={() => setIsPasswordModalOpen(false)}
+              className="absolute top-5 right-5 text-slate-400 hover:text-slate-600 w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center transition font-bold"
+            >
+              ✕
+            </button>
+
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                <KeyRound className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="font-black text-slate-900 text-base">Đổi ID & Mật Khẩu Giáo Viên</h3>
+                <p className="text-xs text-slate-500">Đồng bộ tự động lên Firebase Cloud</p>
+              </div>
+            </div>
+
+            <div className="p-3 bg-indigo-50/70 border border-indigo-100 rounded-2xl text-xs text-indigo-950 leading-relaxed">
+              💡 <strong>Lưu ý:</strong> Khi Thầy/Cô đổi mật khẩu tại đây, hệ thống sẽ lưu vào máy và <strong>đồng bộ ngay lên Firebase Firestore</strong>. Khi mở bất kỳ máy tính, laptop hoặc điện thoại nào khác, Thầy/Cô chỉ cần nhập mật khẩu mới này là vào được ngay!
+            </div>
+
+            {passwordMsg && (
+              <div
+                className={`p-3 rounded-2xl text-xs font-bold ${
+                  passwordMsg.type === 'success'
+                    ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                    : 'bg-red-50 text-red-800 border border-red-200'
+                }`}
+              >
+                {passwordMsg.text}
+              </div>
+            )}
+
+            <form onSubmit={handleUpdateAdminAccount} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-700">Tên đăng nhập (ID) *</label>
+                <input
+                  type="text"
+                  required
+                  value={newAdminUsername}
+                  onChange={(e) => setNewAdminUsername(e.target.value)}
+                  placeholder="admin"
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 font-semibold"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-700">Mật khẩu mới (Tối thiểu 4 ký tự) *</label>
+                <div className="relative">
+                  <input
+                    type={showAdminPass ? 'text' : 'password'}
+                    required
+                    value={newAdminPassword}
+                    onChange={(e) => setNewAdminPassword(e.target.value)}
+                    placeholder="Nhập mật khẩu mới..."
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowAdminPass(!showAdminPass)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  >
+                    {showAdminPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-700">Xác nhận lại mật khẩu mới *</label>
+                <input
+                  type={showAdminPass ? 'text' : 'password'}
+                  required
+                  value={confirmAdminPassword}
+                  onChange={(e) => setConfirmAdminPassword(e.target.value)}
+                  placeholder="Nhập lại mật khẩu mới..."
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsPasswordModalOpen(false)}
+                  className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-2xl text-xs transition"
+                >
+                  Hủy Bỏ
+                </button>
+                <button
+                  type="submit"
+                  disabled={isUpdatingPassword}
+                  className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-2xl text-xs shadow-md shadow-indigo-100 transition flex items-center gap-1.5 cursor-pointer disabled:opacity-75"
+                >
+                  {isUpdatingPassword ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>Đang lưu & Đồng bộ...</span>
+                    </>
+                  ) : (
+                    <span>Lưu & Đồng Bộ Lên Cloud</span>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );

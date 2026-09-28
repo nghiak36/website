@@ -1,0 +1,25 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Quản lý Đề kiểm tra (exams)
+    // Cho phép học sinh đọc đề để làm bài, và giáo viên tạo/sửa/xóa đề
+    match /exams/{examId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // 2. Quản lý Bài nộp của học sinh (submissions)
+    // Cho phép học sinh nộp bài, giáo viên đọc danh sách, chấm điểm tự luận và xóa bài nộp
+    match /submissions/{submissionId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // 3. Quản lý Tài khoản giáo viên & Cài đặt hệ thống (settings)
+    // Giúp đồng bộ mật khẩu admin và thông tin trên mọi máy tính và thiết bị
+    match /settings/{settingId} {
+      allow read: if true;
+      allow write: if true;
+    }
+  }
+}

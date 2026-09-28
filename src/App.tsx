@@ -13,6 +13,7 @@ import {
   saveExamToCloud,
   submitExamToCloud,
   listenSubmissionsFromCloud,
+  listenExamsFromCloud,
   deleteSubmission,
   deleteMultipleSubmissions,
   deleteSubmissionLocal,
@@ -20,9 +21,11 @@ import {
   deleteExamFromStorage,
   deleteMultipleExamsFromStorage,
   deleteAllExamsFromStorage,
-  getIsCloudConnected
+  getIsCloudConnected,
+  getSavedFirebaseConfig,
+  listenTeacherAccountFromCloud
 } from './services/storage';
-import { isTeacherLoggedIn, logoutTeacher } from './services/teacherAuth';
+import { isTeacherLoggedIn, logoutTeacher, syncTeacherAccountWithCloud } from './services/teacherAuth';
 import { Exam, Submission, StudentProfile } from './types';
 import { GraduationCap, Download, ShieldCheck } from 'lucide-react';
 import { generateStandaloneHtml } from './services/standaloneGenerator';
@@ -53,14 +56,26 @@ export default function App() {
     setExams(loadedExams);
     const loadedSubs = await loadSubmissionsFromCloud();
     setSubmissions(loadedSubs);
+    // Đồng bộ tài khoản giáo viên mới nhất từ Cloud
+    await syncTeacherAccountWithCloud();
   };
 
   useEffect(() => {
     refreshAllData();
 
-    // Lắng nghe bài nộp theo thời gian thực
-    const unsubscribe = listenSubmissionsFromCloud((updatedSubs) => {
+    // Lắng nghe đề thi theo thời gian thực (Giáo viên tạo đề là học sinh thấy ngay)
+    const unsubscribeExams = listenExamsFromCloud((updatedExams) => {
+      setExams(updatedExams);
+    });
+
+    // Lắng nghe bài nộp theo thời gian thực (Học sinh nộp bài là giáo viên thấy ngay)
+    const unsubscribeSubs = listenSubmissionsFromCloud((updatedSubs) => {
       setSubmissions(updatedSubs);
+    });
+
+    // Lắng nghe tài khoản giáo viên theo thời gian thực (Đổi mật khẩu ở máy nào thì các máy khác cập nhật ngay)
+    const unsubscribeTeacher = listenTeacherAccountFromCloud((acc) => {
+      localStorage.setItem('edtech_teacher_account_v2', JSON.stringify(acc));
     });
 
     // Nếu học sinh chưa có tên, mở modal nhập họ tên
@@ -72,7 +87,9 @@ export default function App() {
     }
 
     return () => {
-      if (unsubscribe) unsubscribe();
+      if (unsubscribeExams) unsubscribeExams();
+      if (unsubscribeSubs) unsubscribeSubs();
+      if (unsubscribeTeacher) unsubscribeTeacher();
     };
   }, []);
 
@@ -200,7 +217,7 @@ export default function App() {
 
   // 1-Click Tải file index.html từ footer
   const handleQuickDownloadHtml = () => {
-    const htmlContent = generateStandaloneHtml();
+    const htmlContent = generateStandaloneHtml(getSavedFirebaseConfig());
     const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');

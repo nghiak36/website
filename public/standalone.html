@@ -43,7 +43,8 @@
       projectId: "",
       storageBucket: "",
       messagingSenderId: "",
-      appId: ""
+      appId: "",
+      measurementId: ""
     };
 
     let db = null;
@@ -598,6 +599,25 @@
       recoveryPhone: '0702788047'
     };
 
+    // Tự động kéo tài khoản admin từ Cloud Firestore nếu có kết nối
+    if (db) {
+      db.collection('settings').doc('admin_account').get().then(doc => {
+        if (doc && doc.exists) {
+          const d = doc.data();
+          if (d && d.passwordHash) {
+            teacherCredentials.pass = d.passwordHash;
+            teacherCredentials.id = d.username || 'admin';
+            teacherCredentials.hasChanged = !!d.hasChangedInitialPassword;
+            localStorage.setItem('edtech_teacher_id', teacherCredentials.id);
+            localStorage.setItem('edtech_teacher_pass', teacherCredentials.pass);
+            if (d.hasChangedInitialPassword) {
+              localStorage.setItem('edtech_teacher_has_changed', 'true');
+            }
+          }
+        }
+      }).catch(e => console.warn(e));
+    }
+
     // Đề thi ban đầu (Xóa hết đề cũ theo yêu cầu người dùng)
     const DEFAULT_EXAMS = [];
 
@@ -647,12 +667,33 @@
       document.getElementById('teacherAuthSuccess').classList.add('hidden');
     }
 
-    function checkTeacherLogin() {
+    async function checkTeacherLogin() {
       const id = document.getElementById('teacherInputId').value.trim();
       const pass = document.getElementById('teacherInputPass').value;
       const errBox = document.getElementById('teacherAuthError');
 
-      if (id.toLowerCase() === teacherCredentials.id.toLowerCase() && pass === teacherCredentials.pass) {
+      let isMatch = id.toLowerCase() === teacherCredentials.id.toLowerCase() && pass === teacherCredentials.pass;
+      if (!isMatch && db) {
+        try {
+          const doc = await db.collection('settings').doc('admin_account').get();
+          if (doc && doc.exists) {
+            const d = doc.data();
+            if (d && d.passwordHash) {
+              teacherCredentials.pass = d.passwordHash;
+              teacherCredentials.id = d.username || 'admin';
+              teacherCredentials.hasChanged = !!d.hasChangedInitialPassword;
+              localStorage.setItem('edtech_teacher_id', teacherCredentials.id);
+              localStorage.setItem('edtech_teacher_pass', teacherCredentials.pass);
+              if (d.hasChangedInitialPassword) {
+                localStorage.setItem('edtech_teacher_has_changed', 'true');
+              }
+              isMatch = id.toLowerCase() === teacherCredentials.id.toLowerCase() && pass === teacherCredentials.pass;
+            }
+          }
+        } catch(e) { console.warn(e); }
+      }
+
+      if (isMatch) {
         const needsChange = !teacherCredentials.hasChanged || (id.toLowerCase() === 'admin' && pass === 'admin');
         if (needsChange) {
           document.getElementById('teacherLoginForm').classList.add('hidden');
@@ -695,7 +736,17 @@
       localStorage.setItem('edtech_teacher_pass', p1);
       localStorage.setItem('edtech_teacher_has_changed', 'true');
 
-      alert('Đổi mật khẩu thành công! Bạn có thể vào hệ thống.');
+      if (db) {
+        db.collection('settings').doc('admin_account').set({
+          username: teacherCredentials.id,
+          passwordHash: p1,
+          hasChangedInitialPassword: true,
+          recoveryPhone: '0702788047',
+          updatedAt: new Date().toISOString()
+        }, { merge: true }).catch(e => console.warn(e));
+      }
+
+      alert('Đổi mật khẩu thành công! Mật khẩu mới đã được lưu và đồng bộ lên Cloud.');
       isTeacherAuth = true;
       closeTeacherModal();
       switchRole('teacher');
@@ -739,6 +790,16 @@
       teacherCredentials.hasChanged = true;
       localStorage.setItem('edtech_teacher_pass', newP);
       localStorage.setItem('edtech_teacher_has_changed', 'true');
+
+      if (db) {
+        db.collection('settings').doc('admin_account').set({
+          username: teacherCredentials.id,
+          passwordHash: newP,
+          hasChangedInitialPassword: true,
+          recoveryPhone: '0702788047',
+          updatedAt: new Date().toISOString()
+        }, { merge: true }).catch(e => console.warn(e));
+      }
 
       succBox.innerText = 'Khôi phục mật khẩu thành công! Bạn có thể đăng nhập ngay.';
       succBox.classList.remove('hidden');
